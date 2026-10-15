@@ -18,6 +18,7 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.InventoryEvent;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.InventoryView;
 import org.bukkit.inventory.meta.MapMeta;
 import org.bukkit.map.MapView;
 import org.bukkit.plugin.Plugin;
@@ -61,6 +62,9 @@ public class Reflection {
 
 	public static void Enabler() {
 		// PUTTING CLASSES IN ENUM.
+		// NOTE: on modern Paper (1.20.5+) there is no versioned CraftBukkit package and NMS is
+		// unobfuscated, so many of these lookups legitimately return null. Everything that
+		// uses them must be null-safe (getClass/getMethod already return null on failure).
 		Classes.CraftWorld.type = getClass("{cb}.CraftWorld");
 		Classes.World.type = getClass("{b}.World");
 		Classes.CraftBlock.type = getClass("{cb}.block.CraftBlock");
@@ -71,7 +75,6 @@ public class Reflection {
 		Classes.MinecraftServer.type = getClass("{nms}.MinecraftServer");
 		Classes.ChunkProviderServer.type = getClass(VersionMgr.isV_17Plus() ? "{nms}.level.ChunkProviderServer" : "{nms}.ChunkProviderServer");
 		Classes.IChatBaseComponent.type = getClass(VersionMgr.isV_17Plus() ? "{nm}.network.chat.IChatBaseComponent" : "{nms}.IChatBaseComponent");
-//		Classes.PacketPlayOutTitle.type = getClass(VersionMgr.isV_17Plus()? "{nm}.network.protocol.game.PacketPlayOutTitle" : "{nms}.PacketPlayOutTitle");
 
 		if(!VersionMgr.isV1_8()){
 			Classes.Attribute.type = getClass("{b}.attribute.Attribute");
@@ -86,40 +89,32 @@ public class Reflection {
 		Methods.chunkExists.mthd = getMethod(Classes.ChunkProviderServer.getType(), VersionMgr.ChunkExistsName(),
 				int.class, int.class);
 		Methods.setViewDistance.mthd = getMethod(Classes.World.getType(), "setViewDistance", int.class);
+		// No longer needed: TPS is read through the Paper API (see getTPS).
 		Methods.getServer.mthd = getMethod(Classes.MinecraftServer.getType(), "getServer");
 	}
 
-	public static Inventory getTopInventory(InventoryEvent event) {
+	// InventoryView is an interface in newer versions; calling through the interface class
+	// avoids IllegalAccessException on the non-public CraftBukkit implementation.
+	private static Object callView(InventoryEvent event, String name) {
 		try {
 			Object view = event.getView();
-			Method m = view.getClass().getMethod("getTopInventory");
-			m.setAccessible(true);
-			return (Inventory) m.invoke(view);
+			Method m = InventoryView.class.getMethod(name);
+			return m.invoke(view);
 		} catch (NoSuchMethodException | InvocationTargetException | IllegalAccessException e) {
 			throw new RuntimeException(e);
 		}
+	}
+
+	public static Inventory getTopInventory(InventoryEvent event) {
+		return (Inventory) callView(event, "getTopInventory");
 	}
 
 	public static Inventory getBottomInventory(InventoryEvent event) {
-		try {
-			Object view = event.getView();
-			Method m = view.getClass().getMethod("getBottomInventory");
-			m.setAccessible(true);
-			return (Inventory) m.invoke(view);
-		} catch (NoSuchMethodException | InvocationTargetException | IllegalAccessException e) {
-			throw new RuntimeException(e);
-		}
+		return (Inventory) callView(event, "getBottomInventory");
 	}
 
 	public static String getInventoryViewTitle(InventoryEvent event){
-		try {
-			Object view = event.getView();
-			Method m = view.getClass().getMethod("getTitle");
-			m.setAccessible(true);
-			return (String) m.invoke(view);
-		} catch (NoSuchMethodException | InvocationTargetException | IllegalAccessException e) {
-			throw new RuntimeException(e);
-		}
+		return (String) callView(event, "getTitle");
 	}
 
 	@SuppressWarnings("deprecation")
@@ -141,34 +136,6 @@ public class Reflection {
 		}
 	}
 
-//	public void sendTitle(Player p, int fadein, int stay, int fadeout, String title, String subtitle) {
-//		try {
-//			Object enumTitle = Classes.PacketPlayOutTitle.getType().getDeclaredClasses()[0].getField("TITLE").get(null);
-//			Object enumSubtitle = Classes.PacketPlayOutTitle.getType().getDeclaredClasses()[0].getField("SUBTITLE")
-//					.get(null);
-//
-//			Object titlebase = runMethod(null, Methods.getIChatBaseComponent.getMethod(),
-//					"{\"text\": \"" + title + "\"}");
-//			Object subtitlebase = runMethod(null, Methods.getIChatBaseComponent.getMethod(),
-//					"{\"text\": \"" + subtitle + "\"}");
-//
-//			Class<?> packetcls = Classes.PacketPlayOutTitle.getType();
-//			Constructor<?> constr = packetcls.getConstructor(
-//					Classes.PacketPlayOutTitle.getType().getDeclaredClasses()[0], Classes.IChatBaseComponent.getType(),
-//					int.class, int.class, int.class);
-//
-//			Object packetTitle = constr.newInstance(enumTitle, titlebase, fadein, stay, fadeout);
-//			Object packetSubtitle = constr.newInstance(enumSubtitle, subtitlebase, fadein, stay, fadeout);
-//
-//			sendPlayerPacket(p, packetTitle);
-//			sendPlayerPacket(p, packetSubtitle);
-//		}
-//
-//		catch (Exception e) {
-//			e.printStackTrace();
-//		}
-//	}
-
 	public static MapView getMapView(int i) {
 		Class<?> buk = Bukkit.class;
 
@@ -181,30 +148,26 @@ public class Reflection {
 		}
 
 	}
-	
-	private static Object minecraftserver = null;
-    public static double getTPS(int number) {
-        try {
-            if (minecraftserver == null) {
-                minecraftserver = Methods.getServer.mthd.invoke(null);
-            }
 
-            try {
-                Field f = Reflection.getField(Classes.MinecraftServer.type, "tps");
-                f.setAccessible(true);
-                return ((double[])f.get(minecraftserver))[number];
-            } catch (NoSuchFieldException e) {
-                Field f = Reflection.getField(Classes.MinecraftServer.type, "recentTps");
-                f.setAccessible(true);
-                return ((double[])f.get(minecraftserver))[number];
-            } catch (NullPointerException e) {
-                return -1;
-            }
-        } catch(Exception e) {
-            e.printStackTrace();
-            return -1;
-        }
-    }
+	/**
+	 * Returns the server TPS using the Paper API.
+	 * @param number 0 = last 1 minute, 1 = last 5 minutes, 2 = last 15 minutes
+	 * @return the TPS, or -1 if unavailable
+	 */
+	public static double getTPS(int number) {
+		try {
+			double[] tps = Bukkit.getTPS();
+			if (tps == null || tps.length == 0) {
+				return -1;
+			}
+			if (number < 0) number = 0;
+			if (number >= tps.length) number = tps.length - 1;
+			return tps[number];
+		} catch (Throwable t) {
+			// Not Paper, or API unavailable. Don't spam the console from a repeating task.
+			return -1;
+		}
+	}
 
 	public static int getId(MapView view) {
 		if (view == null) {
@@ -236,49 +199,57 @@ public class Reflection {
 
 	public static Class<?> getClass(String classname) {
 		try {
-			
 			String path = classname.replace("{nms}", "net.minecraft.server" + (VersionMgr.isV_17Plus() ? "" : "." + version))
 					.replace("{nmsv}", "net.minecraft.server." + version)
 					.replace("{nm}", "net.minecraft" + (VersionMgr.isV_17Plus() ? "" : "." + version))
 					.replace("{cb}", "org.bukkit.craftbukkit." + version)
 					.replace("{b}", "org.bukkit");
 			return Class.forName(path);
-		} catch (Exception e) {
-			e.printStackTrace();
+		} catch (Throwable e) {
 			return null;
 		}
 	}
 
 	public static Object getCraftWorld(World w) {
+		// On modern Paper the World instance already is the CraftWorld.
 		Class<?> crwclass = Classes.CraftWorld.getType();
-		System.out.println(crwclass.getName());
-		Object craftworld = crwclass.cast(w);
-		return craftworld;
+		if (crwclass == null || !crwclass.isInstance(w)) {
+			return w;
+		}
+		return crwclass.cast(w);
 	}
 
 	public static Object getWorldServer(Object craftWorld) {
 		try {
 			return getFieldValue(craftWorld, "world");
 		} catch (Exception e) {
-			e.printStackTrace();
+			// Field/class layout differs on newer versions; callers must tolerate null.
 		}
 		return null;
 	}
 
 	public static Object getChunkProvider(Object worldServer) {
 		try {
-			return runMethod(worldServer, Methods.getChunkProviderServer.getMethod());
+			Method m = Methods.getChunkProviderServer.getMethod();
+			if (worldServer == null || m == null) {
+				return null;
+			}
+			return runMethod(worldServer, m);
 		} catch (Exception e) {
-			e.printStackTrace();
+			// ignore, see isChunkExistent
 		}
 		return null;
 	}
 
 	public static boolean isChunkExistent(Object chunkProvider, int x, int z) {
 		try {
-			return (boolean) runMethod(chunkProvider, Methods.chunkExists.getMethod(), x, z);
+			Method m = Methods.chunkExists.getMethod();
+			if (chunkProvider == null || m == null) {
+				return true;
+			}
+			return (boolean) runMethod(chunkProvider, m, x, z);
 		} catch (Exception e) {
-			e.printStackTrace();
+			// ignore
 		}
 		// NOTE: ASSUMING TRUE IN ORDER TO IGNORE IF EXCEPTION POPS UP.
 		return true;
@@ -304,8 +275,20 @@ public class Reflection {
 	public static void setmapId(ItemStack s, int id) {
 		MapMeta mapm = (MapMeta) s.getItemMeta();
 		try {
-			runMethod(mapm, Methods.setMapId.getMethod(), id);
-		} catch (Exception e) {
+			Method m = Methods.setMapId.getMethod();
+			if (m != null) {
+				// Old servers: MapMeta#setMapId(int) still exists.
+				runMethod(mapm, m, id);
+			} else {
+				// Newer servers: attach the MapView instead.
+				MapView view = getMapView(id);
+				if (view != null) {
+					mapm.setMapView(view);
+				} else {
+					Main.sendDebug("setmapId: no MapView found for id " + id, 1);
+				}
+			}
+		} catch (Throwable e) {
 			e.printStackTrace();
 		}
 		s.setItemMeta(mapm);
@@ -314,8 +297,15 @@ public class Reflection {
 	public static int getMapId(ItemStack s) {
 		MapMeta mapm = (MapMeta) s.getItemMeta();
 		try {
-			return (int) runMethod(mapm, Methods.getMapId.getMethod());
-		} catch (Exception e) {
+			Method m = Methods.getMapId.getMethod();
+			if (m != null) {
+				return (int) runMethod(mapm, m);
+			}
+			// Newer servers: read the id from the MapView.
+			if (mapm.hasMapView()) {
+				return getId(mapm.getMapView());
+			}
+		} catch (Throwable e) {
 			e.printStackTrace();
 		}
 		return 0;
@@ -382,48 +372,6 @@ public class Reflection {
 		}
 	}
 
-//	public static long getObjectSize(Object obj, int recursiveness) {
-//		if (obj == null) {
-//			return 0;
-//		}
-//		
-//		
-//		if (obj instanceof Serializable) {
-//			return getSerializedSize((Serializable) obj);
-//		}
-//		
-//		Class<?> cls = obj.getClass();
-//		
-//		long size = 0;
-//		
-//		if (!cached.containsKey(cls)) {
-//			cached.put(cls, cls.getDeclaredFields());
-//		}
-//		
-//		for (Field fl : cached.get(cls)) {
-//			fl.setAccessible(true);
-//			Object nobj = getFieldValue(fl, obj);
-//			size+=getObjectSize(nobj, recursiveness+1);
-//		}
-//		
-//		return size;
-//	}
-//	
-//	private static long getSerializedSize(Serializable obj) {
-//		
-//		try {
-//			ByteArrayOutputStream bos = new ByteArrayOutputStream();
-//			ObjectOutputStream oos = new ObjectOutputStream(bos);
-//			oos.writeObject(obj);
-//			oos.flush();
-//			byte[] data = bos.toByteArray();
-//
-//			return data.length;
-//		} catch (Exception e) {
-//			return 0;
-//		}
-//	}
-
 	public static Object getFieldValue(Object instance, String fieldName) throws Exception {
 		Field field = instance.getClass().getDeclaredField(fieldName);
 		field.setAccessible(true);
@@ -447,6 +395,9 @@ public class Reflection {
 	}
 
 	public static Method getMethod(Class<?> clazz, String methodName, Class<?>... resl) {
+		if (clazz == null) {
+			return null;
+		}
 		Method method;
 		try {
 			method = clazz.getDeclaredMethod(methodName, resl);
@@ -489,9 +440,9 @@ public class Reflection {
 
 	public static int getPing(Player p) {
 		try {
-			Object entityPlayer = Methods.getPlayerHandle.getMethod().invoke(p);
-			return (int) getFieldValue(entityPlayer, "ping");
-		} catch (Exception e) {
+			// Paper/Spigot API, no reflection needed.
+			return p.getPing();
+		} catch (Throwable e) {
 			return -1;
 		}
 	}
@@ -556,61 +507,19 @@ public class Reflection {
 	private static boolean isSimple(Object obj) {
 		Class<?> cls = obj.getClass();
 
-		if (cls.isPrimitive()) {
-			return true;
-		}
-
-		if (cls.isEnum()) {
-			return true;
-		}
-
-		if (cls == Integer.class) {
-			return true;
-		}
-
-		if (cls == Boolean.class) {
-			return true;
-		}
-
-		if (cls == String.class) {
-			return true;
-		}
-
-		if (cls == Character.class) {
-			return true;
-		}
-
-		if (cls == Byte.class) {
-			return true;
-		}
-
-		if (cls == Short.class) {
-			return true;
-		}
-
-		if (cls == Float.class) {
-			return true;
-		}
-
-		if (cls == Double.class) {
-			return true;
-		}
-
-		if (cls == Long.class) {
-			return true;
-		}
-
-		return false;
+		return cls.isPrimitive() || cls.isEnum()
+				|| cls == Integer.class || cls == Boolean.class || cls == String.class
+				|| cls == Character.class || cls == Byte.class || cls == Short.class
+				|| cls == Float.class || cls == Double.class || cls == Long.class;
 	}
 
 	public static void setViewDistance(World w, int amount) {
 		try {
-			runMethod(w, Methods.setViewDistance.mthd, amount);
+			// Paper API: World#setViewDistance(int). Called directly, no reflection.
+			w.setViewDistance(amount);
 			Main.sendDebug("Succesfully set view distance at " + amount + " in world " + w.getName(), 1);
-		} catch (Exception e) {
+		} catch (Throwable e) {
 			Main.sendDebug("Exception at setViewDistance (" + w.getName() + ", " + amount + ")", 1);
 		}
-		
-		
 	}
 }
